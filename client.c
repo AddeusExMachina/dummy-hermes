@@ -22,14 +22,25 @@
 #include <stdio.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <termios.h>
 #include <unistd.h>
 
 #define PORT 50001
 #define IP "127.0.0.1"
 
+/* Set the terminal to raw mode.
+ * Using raw mode we can avoid that text entered by user and text from incoming messages collide. */
+void set_raw_mode() {
+    struct termios new_termios;
+    tcgetattr(STDIN_FILENO, &new_termios);
+    new_termios.c_lflag &= ~(ICANON | ECHO);
+    tcsetattr(STDIN_FILENO, TCSANOW, &new_termios);
+}
+
 /* In main() first we create a client socket to connect to the server, then
  * we continously listen for messages from other clients and for console input */
 int main() {
+	set_raw_mode();
 
 	/* ================================================= Client socket creation ================================================= *
 	 * To instantiate the client socket we rely on:
@@ -67,7 +78,7 @@ int main() {
 	memset(buffer, 0, sizeof buffer);
 	
 	/* The set of file descriptors used to check incoming data is made up of:
-	 * 1. the client file descriptor for incoming data from the server, that is messages from other clients
+	 * 1. the client file descriptor for data from the server, that is messages from other clients
 	 * 2. the input console where the user types the message */
 	struct pollfd fds[2];
 	int nfds = 2;
@@ -76,22 +87,65 @@ int main() {
 	fds[1].fd = stdin_fd;
 	fds[1].events = POLLIN;
 
+	/* Text typed by the user */
+	char input[1024] = {0};
+	int length = 0;
+
 	int timeout = 10000;
 	while (1) {
 		/* We wait for events */
 		int num_events = poll(fds, nfds, timeout);
 		if (num_events > 0) {
-			/* If there is a message from the server, let's show it */
-			if (fds[0].revents & POLLIN) {
-				memset(buffer, 0, sizeof buffer);
-				read(client_fd, buffer, sizeof(buffer));
-				printf("%s", buffer);
-			}
-			/* If the user has typed a message, let's send it to the server */
+			/* When a user types on console we buffer the entered text.
+			 * If the last typed character is a new line '\n' we send all the
+			 * the buffered data to the server, then we empty the input buffer.
+			 * TODO: This is not so nice, a new line character may appear in any position
+			 * in the input text. It should be improved. */
 			if (fds[1].revents & POLLIN) {
 				memset(buffer, 0, sizeof buffer);
-				read(stdin_fd, buffer, sizeof(buffer));
-				send(client_fd, buffer, strlen(buffer), 0);
+				int bytes_read = read(stdin_fd, buffer, sizeof(buffer));
+				printf("%s", buffer);
+    				fflush(stdout);
+				memcpy(input + length, buffer, strlen(buffer));
+				length += bytes_read;
+
+				if (input[length - 1] == '\n') {
+					send(client_fd, input, strlen(input), 0);
+					memset(input, 0, sizeof input);
+					length = 0;
+				}
+			}
+
+			/* If there is a message from the server, in order to display it:
+			 * 1. we hide the text entered in input by the user
+			 * 2. we show the message on the current line
+			 * 3. we re-display the input text on the next line */
+			if (fds[0].revents & POLLIN) {
+				memset(buffer, 0, sizeof buffer);
+				int bytes_read = read(client_fd, buffer, sizeof(buffer));
+
+				if (bytes_read <= 0) {
+					printf("Server disconnected. Bye bye\n");
+					return 0;
+				}
+
+                		/* Save the cursor position */
+                		printf("\033[s");
+                		/* Move to the beginning of the line */
+                		printf("\033[0G");
+                		/* Clear the line */
+                		printf("\033[K");
+				/* Print the message */
+				printf("%s", buffer);
+
+				/* Reprint the user's input */
+				printf("%s", input);
+				fflush(stdout);
+
+                		/* Restore the cursor position */
+                		printf("\033[u");
+				/* Move the cursor down by one line */
+				printf("\033[B");
 			}
 		}
 	}
