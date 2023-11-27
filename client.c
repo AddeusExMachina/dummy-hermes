@@ -136,7 +136,7 @@ int main() {
                 		/* Clear the line */
                 		printf("\033[K");
 				/* Print the message */
-				printf("%s", buffer);
+				printf("%s\n", buffer);
 
 				/* Reprint the user's input */
 				printf("%s", input);

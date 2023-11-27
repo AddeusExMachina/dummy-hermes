@@ -27,6 +27,16 @@
 #define MAX_CLIENTS 1000
 #define PORT 50001
 
+/* For each client we keep information about its username and the file descriptor.
+ * TODO: the value of username is set to the string "userN" where N is the file descriptor of the client.
+ * A client should be allowed to choose its own username */
+struct Client {
+	char* username;
+	int fd;
+};
+
+struct Client *clients[MAX_CLIENTS];
+
 /* In main() first we create the server socket, then
  * we listen for connection requests and for messages from connected clients */
 int main() {
@@ -67,8 +77,8 @@ int main() {
 		exit(EXIT_FAILURE);
 	}
 
-	/* The set of file descriptors used to check incoming data */
-	struct pollfd fds[MAX_CLIENTS];
+	/* The set of file descriptors used to check incoming data: one for the server plus one for each client */
+	struct pollfd fds[MAX_CLIENTS + 1];
 	/* At the beginning we will look for events on a single file descriptor,
 	 * that is the server looking for new connections.
 	 * The first entry in the set is always occupied by the server */
@@ -92,12 +102,24 @@ int main() {
 		} else if (num_events) {
 			/* Some file descriptors reported an event */
 			if (fds[0].revents & POLLIN) {
-			/* If the server received a connection request we add a new file descriptor
-			 * to the set of file descriptors to be monitored for reading */
+			/* If the server received a connection request:
+			 * 1. we append a new file descriptor to the set of file descriptors to be monitored for reading
+			 * 2. we append a new client to clients */
 				int client_socket = accept(server_fd, (struct sockaddr*) &address, &addrlen);
 				send(client_socket, welcome_message, strlen(welcome_message), 0);
 				fds[nfds].fd = client_socket;
 				fds[nfds].events = POLLIN;
+
+				struct Client *c = malloc(sizeof(*c));
+				/* We evaluate the size of the string made up of "user" followed by
+				 * the client file descriptor, an integer known at runtime */
+				int username_length = snprintf(NULL, 0, "user%d", client_socket) + 1;
+				char *username = (char *) malloc(username_length);
+				snprintf(username, username_length, "user%d", client_socket);
+				c->username = username;
+				c->fd = client_socket;
+				clients[nfds - 1] = c;
+
 				nfds += 1;
 			}
 			for (int i = 1; i < nfds; i++) {
@@ -107,22 +129,30 @@ int main() {
 					 * 2. the client disconnected */
 					int bytes_received = read(fds[i].fd, buffer, sizeof(buffer) - 1);
 					if (bytes_received <= 0) {
-						/* If the client disconnected we discard all info about it: we do it
-						 * by overriding the entry of that client in the file descriptor set with 
-						 * the last entry, then the data in the last entry of the file descriptor set
-						 * is invalidated */
+						/* If the client disconnected we discard all info about it: we do it by
+						 * releasing the related resources and by overriding the entry of that client
+						 * in the file descriptor set and in the clients array with the last entry,
+						 * the data in the last entry of both collections is then invalidated. */
 						close(fds[i].fd);
 						fds[i].fd = fds[nfds - 1].fd;
 						fds[nfds - 1].fd = -1;
 						fds[nfds - 1].events = 0;
 						fds[nfds - 1].revents = 0;
+
+						free(clients[i - 1]->username);
+						clients[i - 1] = clients[nfds - 2];
+						clients[nfds - 1] = NULL;
+
 						nfds -= 1;
 						memset(buffer, 0, sizeof buffer);
 					} else {
 						/* If the client sent a message, broadcast the message */
+						int message_length = strlen(clients[i - 1]->username) + strlen(buffer) + 2;
+						char message[message_length];
+						snprintf(message, message_length, "%s> %s", clients[i - 1]-> username, buffer);
 						for (int j = 1; j < nfds; j++) {
 							if (i != j) {
-								send(fds[j].fd, buffer, bytes_received, 0);
+								send(fds[j].fd, message, message_length, 0);
 							}
 						}
 						memset(buffer, 0, sizeof buffer);
