@@ -8,6 +8,6 @@ I mean that guy is the creator of Redis, it shouldn't be a bad idea to follow on
 ## Current work and future features:
 
 Nowadays the chat only provides extremely basic features. I'd like to implement a few new ones:
-- set a username/nickname for each client
-- improve the editing of messages for a client: now when a user is typing a message it may receive messages from other clients and this stuff concatenates to what he's currently written, eww 😖
+- add more commands for clients beside `\setusername`
+- add control and validation for the editing of messages for a client: a client can move the cursor in any position when editing the text message, this is not so nice
 - modularize the project, for example network logic could be placed in a separated file
