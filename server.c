@@ -27,9 +27,7 @@
 #define MAX_CLIENTS 1000
 #define PORT 50001
 
-/* For each client we keep information about its username and the file descriptor.
- * TODO: the value of username is set to the string "userN" where N is the file descriptor of the client.
- * A client should be allowed to choose its own username */
+/* For each client we keep information about its username and the file descriptor. */
 struct Client {
 	char* username;
 	int fd;
@@ -105,19 +103,19 @@ int main() {
 			/* If the server received a connection request:
 			 * 1. we append a new file descriptor to the set of file descriptors to be monitored for reading
 			 * 2. we append a new client to clients */
-				int client_socket = accept(server_fd, (struct sockaddr*) &address, &addrlen);
-				send(client_socket, welcome_message, strlen(welcome_message), 0);
-				fds[nfds].fd = client_socket;
+				int client_fd = accept(server_fd, (struct sockaddr*) &address, &addrlen);
+				send(client_fd, welcome_message, strlen(welcome_message), 0);
+				fds[nfds].fd = client_fd;
 				fds[nfds].events = POLLIN;
 
 				struct Client *c = malloc(sizeof(*c));
-				/* We evaluate the size of the string made up of "user" followed by
-				 * the client file descriptor, an integer known at runtime */
-				int username_length = snprintf(NULL, 0, "user%d", client_socket) + 1;
+ 				/* The default value of username is set to the string "userN" where N is the file descriptor of the client.
+				 * We evaluate the size of the string made up of "user" followed by the client file descriptor */
+				int username_length = snprintf(NULL, 0, "user%d", client_fd) + 1;
 				char *username = (char *) malloc(username_length);
-				snprintf(username, username_length, "user%d", client_socket);
+				snprintf(username, username_length, "user%d", client_fd);
 				c->username = username;
-				c->fd = client_socket;
+				c->fd = client_fd;
 				clients[nfds - 1] = c;
 
 				nfds += 1;
@@ -144,19 +142,33 @@ int main() {
 						clients[nfds - 1] = NULL;
 
 						nfds -= 1;
-						memset(buffer, 0, sizeof buffer);
 					} else {
-						/* If the client sent a message, broadcast the message */
-						int message_length = strlen(clients[i - 1]->username) + strlen(buffer) + 2;
-						char message[message_length];
-						snprintf(message, message_length, "%s> %s", clients[i - 1]-> username, buffer);
-						for (int j = 1; j < nfds; j++) {
-							if (i != j) {
-								send(fds[j].fd, message, message_length, 0);
+						/* The message may be a command or a text message for the other clients */
+						if (buffer[0] == '\\') {
+						/* Assume for now that when the first character in a message is a backslash
+						 * the client entered the command for changing its username */
+							/* the new username is the string right after "\setusername ",
+							 * whose length is 13 (including the space) */
+							int new_username_length = bytes_received - 13;
+							char* new_username = malloc(new_username_length);
+							memcpy(new_username, buffer + 13, new_username_length);
+							new_username[new_username_length - 1] = '\0';
+							free(clients[i - 1]->username);
+							clients[i - 1]->username = new_username;
+						} else {
+							/* If the client sent a message, broadcast the message */
+							int message_length = strlen(clients[i - 1]->username) + bytes_received + 2;
+							char message[message_length];
+							snprintf(message, message_length, "%s> %s", clients[i - 1]-> username, buffer);
+
+							for (int j = 1; j < nfds; j++) {
+								if (i != j) {
+									send(fds[j].fd, message, message_length, 0);
+								}
 							}
 						}
-						memset(buffer, 0, sizeof buffer);
 					}
+					memset(buffer, 0, sizeof buffer);
 				}
 			}
 		}

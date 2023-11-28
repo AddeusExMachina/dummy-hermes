@@ -91,6 +91,9 @@ int main() {
 	char input[1024] = {0};
 	int length = 0;
 
+	printf("you> ");
+	fflush(stdout);
+
 	int timeout = 10000;
 	while (1) {
 		/* We wait for events */
@@ -113,6 +116,8 @@ int main() {
 					send(client_fd, input, strlen(input), 0);
 					memset(input, 0, sizeof input);
 					length = 0;
+					printf("you> ");
+					fflush(stdout);
 				}
 			}
 
@@ -139,7 +144,7 @@ int main() {
 				printf("%s\n", buffer);
 
 				/* Reprint the user's input */
-				printf("%s", input);
+				printf("you> %s", input);
 				fflush(stdout);
 
                 		/* Restore the cursor position */
