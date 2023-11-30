@@ -27,121 +27,151 @@
 #define MAX_CLIENTS 1000
 #define PORT 50001
 
-/* For each client we keep information about its username and the file descriptor. */
+/* For each client we keep information about its username and the relative position in the file descriptor set. */
 struct Client {
 	char* username;
-	int fd;
+	int fdsIndex;
 };
+
+/* To create the server we instantiate a socket relying on:
+ * 1. socket() to create a socket that allows communication between processes on different hosts connected by IPV4
+ * 2. setsockopt() to enable the reuse of address and port */
+int createServer() {
+	int serverFD;
+	int opt = 1;
+
+	if ((serverFD = socket(AF_INET, SOCK_STREAM, 0)) == -1) {
+		perror("Socket creation error");
+		exit(EXIT_FAILURE);
+	}
+
+	if (setsockopt(serverFD, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) == -1) {
+		perror("setsockopt error");
+		exit(EXIT_FAILURE);
+	}
+
+	return serverFD;
+}
+
+/* We put the server listening on a given port using:
+ * 1. bind() to bind the socket to (local) address and port
+ * 2. listen() to actually make the socket capable of listening for connections */
+void setListenMode(int serverFD, int port) {
+	struct sockaddr_in address;
+	socklen_t addrlen = sizeof(address);
+
+	address.sin_family = AF_INET;
+	address.sin_addr.s_addr = INADDR_ANY;
+	address.sin_port = htons(port);
+
+	if (bind(serverFD, (struct sockaddr*)&address, addrlen) == -1) {
+		perror("bind error");
+		exit(EXIT_FAILURE);
+	}
+
+	if (listen(serverFD, 3) == -1) {
+		perror("listen error");
+		exit(EXIT_FAILURE);
+	}
+}
+
+/* Create a socket from a client connection request and return the relative file descriptor. 
+ * Retry in case of error. */
+int acceptConnection(int serverFD) {
+	struct sockaddr_in address;
+	socklen_t addrlen = sizeof(address);
+	int clientFD;
+	while ((clientFD = accept(serverFD, (struct sockaddr*) &address, &addrlen)) == -1);
+	return clientFD;
+}
 
 struct Client *clients[MAX_CLIENTS];
 
 /* In main() first we create the server socket, then
  * we listen for connection requests and for messages from connected clients */
 int main() {
+	int serverFD = createServer();
+	setListenMode(serverFD, PORT);
 
-	/* ================================================= Server socket creation ================================================= *
-	 * To instantiate the server socket we rely on:
-	 * 1. socket() to create a socket that allows communication between processes on different hosts connected by IPV4
-	 * 2. setsockopt() to enable the reuse of address and port
-	 * 3. bind() to bind the socket to address and port
-	 * 4. listen() to make the socket wait for incoming connection requests
-	 * ======================================================================================================================== */
-	int server_fd;
-	struct sockaddr_in address;
-	int opt = 1;
-	socklen_t addrlen = sizeof(address);
 	char buffer[1024] = { 0 };
 
-	if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) == -1) {
-		perror("Socket creation error");
-		exit(EXIT_FAILURE);
-	}
-
-	if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) == -1) {
-		perror("setsockopt error");
-		exit(EXIT_FAILURE);
-	}
-
-	address.sin_family = AF_INET;
-	address.sin_addr.s_addr = INADDR_ANY;
-	address.sin_port = htons(PORT);
-	if (bind(server_fd, (struct sockaddr*)&address, sizeof(address)) == -1) {
-		perror("bind error");
-		exit(EXIT_FAILURE);
-	}
-
-	if (listen(server_fd, 3) == -1) {
-		perror("listen error");
-		exit(EXIT_FAILURE);
-	}
-
 	/* The set of file descriptors used to check incoming data: one for the server plus one for each client */
-	struct pollfd fds[MAX_CLIENTS + 1];
+	struct pollfd* fds = malloc(MAX_CLIENTS + 1);
 	/* At the beginning we will look for events on a single file descriptor,
-	 * that is the server looking for new connections.
-	 * The first entry in the set is always occupied by the server */
-	fds[0].fd = server_fd;
+	 * that is the server looking for new connections. */
+	fds[0].fd = serverFD;
 	fds[0].events = POLLIN;
-	int nfds = 1;
+	/* Notes about the number of connected clients:
+	 * 1. numClients also represents the index of the last client in clients
+	 * 2. numClients+1 represents the index of the last client in fds, keep in mind that the 
+	 *    first entry in the set is always occupied by the server. */
+	int numClients = 0;
 
 	char* welcome_message =
 		"=============================\n"
 		" Hello, Welcome in this chat \n"
 		"=============================\n";
-
 	int timeout = 10000;
 
 	while (1) {
 		/* We wait for events */
-		int num_events = poll(fds, nfds, timeout);
-		if (num_events == -1) {
+		int numEvents = poll(fds, numClients + 1, timeout);
+		if (numEvents == -1) {
 			perror("poll() error");
-			exit(1);
-		} else if (num_events) {
+			exit(EXIT_FAILURE);
+		} else if (numEvents) {
 			/* Some file descriptors reported an event */
 			if (fds[0].revents & POLLIN) {
-			/* If the server received a connection request:
-			 * 1. we append a new file descriptor to the set of file descriptors to be monitored for reading
-			 * 2. we append a new client to clients */
-				int client_fd = accept(server_fd, (struct sockaddr*) &address, &addrlen);
-				send(client_fd, welcome_message, strlen(welcome_message), 0);
-				fds[nfds].fd = client_fd;
-				fds[nfds].events = POLLIN;
+			/* If the server received a connection request we append a new client
+			 * whose file descriptor will be monitored for reading */
+				int clientFD = acceptConnection(serverFD);
 
-				struct Client *c = malloc(sizeof(*c));
- 				/* The default value of username is set to the string "userN" where N is the file descriptor of the client.
-				 * We evaluate the size of the string made up of "user" followed by the client file descriptor */
-				int username_length = snprintf(NULL, 0, "user%d", client_fd) + 1;
+ 				/* The default value of username is set to the string "user<FD>" where <FD> is the file descriptor of that client. */
+				int username_length = snprintf(NULL, 0, "user%d", clientFD) + 1;
 				char *username = (char *) malloc(username_length);
-				snprintf(username, username_length, "user%d", client_fd);
-				c->username = username;
-				c->fd = client_fd;
-				clients[nfds - 1] = c;
+				snprintf(username, username_length, "user%d", clientFD);
+				struct Client *client = malloc(sizeof(*client));
+				client->username = username;
+				client->fdsIndex = numClients + 1;
 
-				nfds += 1;
+				clients[numClients] = client;
+
+				fds[client->fdsIndex].fd = clientFD;
+				fds[client->fdsIndex].events = POLLIN;
+
+				numClients += 1;
+
+				send(clientFD, welcome_message, strlen(welcome_message), 0);
 			}
-			for (int i = 1; i < nfds; i++) {
-				if (fds[i].revents & POLLIN) {
+
+			for (int i = 0; i < numClients; i++) {
+				struct Client* client = clients[i];
+				int fdsIndex = client->fdsIndex;
+
+				if (fds[fdsIndex].revents & POLLIN) {
 					/* If there is activity on a client it means:
-					 * 1. there's a message from the client, or
-					 * 2. the client disconnected */
-					int bytes_received = read(fds[i].fd, buffer, sizeof(buffer) - 1);
+					 * 1. the client disconnected, or
+					 * 2. there's a message from the client */
+					int bytes_received = read(fds[fdsIndex].fd, buffer, sizeof(buffer) - 1);
 					if (bytes_received <= 0) {
 						/* If the client disconnected we discard all info about it: we do it by
 						 * releasing the related resources and by overriding the entry of that client
-						 * in the file descriptor set and in the clients array with the last entry,
+						 * in the file descriptor set and in clients with the last entry,
 						 * the data in the last entry of both collections is then invalidated. */
-						close(fds[i].fd);
-						fds[i].fd = fds[nfds - 1].fd;
-						fds[nfds - 1].fd = -1;
-						fds[nfds - 1].events = 0;
-						fds[nfds - 1].revents = 0;
+						close(fds[fdsIndex].fd);
+						free(client->username);
 
-						free(clients[i - 1]->username);
-						clients[i - 1] = clients[nfds - 2];
-						clients[nfds - 1] = NULL;
+						fds[fdsIndex].fd = fds[numClients].fd;
+						fds[numClients].fd = -1;
+						fds[numClients].events = 0;
+						fds[numClients].revents = 0;
 
-						nfds -= 1;
+						/* Last client takes the position of current deleting client in file descriptor set */
+						clients[numClients - 1]->fdsIndex = fdsIndex;
+						clients[i] = clients[numClients - 1];
+						clients[numClients - 1] = NULL;
+
+						numClients -= 1;
 					} else {
 						/* The message may be a command or a text message for the other clients */
 						if (buffer[0] == '\\') {
@@ -153,17 +183,17 @@ int main() {
 							char* new_username = malloc(new_username_length);
 							memcpy(new_username, buffer + 13, new_username_length);
 							new_username[new_username_length - 1] = '\0';
-							free(clients[i - 1]->username);
-							clients[i - 1]->username = new_username;
+							free(client->username);
+							client->username = new_username;
 						} else {
 							/* If the client sent a message, broadcast the message */
-							int message_length = strlen(clients[i - 1]->username) + bytes_received + 2;
+							int message_length = strlen(client->username) + bytes_received + 2;
 							char message[message_length];
-							snprintf(message, message_length, "%s> %s", clients[i - 1]-> username, buffer);
+							snprintf(message, message_length, "%s> %s", client->username, buffer);
 
-							for (int j = 1; j < nfds; j++) {
+							for (int j = 0; j < numClients; j++) {
 								if (i != j) {
-									send(fds[j].fd, message, message_length, 0);
+									send(fds[clients[j]->fdsIndex].fd, message, message_length, 0);
 								}
 							}
 						}
