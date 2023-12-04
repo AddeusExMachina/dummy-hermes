@@ -5,7 +5,7 @@ server: server.c
 	$(CC) server.c socketlib.c -o server $(CFLAGS)
 
 client: client.c
-	$(CC) client.c -o client $(CFLAGS)
+	$(CC) client.c socketlib.c -o client $(CFLAGS)
 
 clean:
 	rm -f server

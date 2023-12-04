@@ -16,6 +16,7 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <arpa/inet.h>
 #include <netinet/in.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -72,4 +73,28 @@ int acceptConnection(int serverFD) {
 	return clientFD;
 }
 
+int createClient() {
+	int clientFD;
+	if ((clientFD = socket(AF_INET, SOCK_STREAM, 0)) == -1) {
+		perror("Socket creation error");
+		exit(EXIT_FAILURE);
+	}
+	return clientFD;
+}
 
+void connectToServer(int clientFD, char *ip, int port) {
+	struct sockaddr_in serverAddress;
+
+	serverAddress.sin_family = AF_INET;
+	serverAddress.sin_port = htons(port);
+
+	if (inet_pton(AF_INET, ip, &serverAddress.sin_addr) <= 0) {
+		perror("Address is invalid or not supported");
+		exit(EXIT_FAILURE);
+	}
+
+	if (connect(clientFD, (struct sockaddr*) &serverAddress, sizeof(serverAddress)) < 0) {
+		perror("Connection failed");
+		exit(EXIT_FAILURE);
+	}
+}

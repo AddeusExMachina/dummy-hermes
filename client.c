@@ -25,22 +25,24 @@
 #include <termios.h>
 #include <unistd.h>
 
+#include "socketlib.h"
+
 #define PORT 50001
 #define IP "127.0.0.1"
 
 /* Set the terminal to raw mode.
  * Using raw mode we can avoid that text entered by user and text from incoming messages collide. */
-void set_raw_mode() {
-    struct termios new_termios;
-    tcgetattr(STDIN_FILENO, &new_termios);
-    new_termios.c_lflag &= ~(ICANON | ECHO);
-    tcsetattr(STDIN_FILENO, TCSANOW, &new_termios);
+void setRawMode() {
+    struct termios newTermios;
+    tcgetattr(STDIN_FILENO, &newTermios);
+    newTermios.c_lflag &= ~(ICANON | ECHO);
+    tcsetattr(STDIN_FILENO, TCSANOW, &newTermios);
 }
 
 /* In main() first we create a client socket to connect to the server, then
  * we continously listen for messages from other clients and for console input */
 int main() {
-	set_raw_mode();
+	setRawMode();
 
 	/* ================================================= Client socket creation ================================================= *
 	 * To instantiate the client socket we rely on:
@@ -49,31 +51,33 @@ int main() {
 	 * 3. inet_pton() to convert IPv4 and IPv6 addresses from text to binary form
 	 * 4. connect() to initiate the connection to the server
 	 * ======================================================================================================================== */
-	int client_fd;
-	struct sockaddr_in serv_addr;
+	int clientFD = createClient();
+	//connectToServer(clientFD, IP, PORT);
+	connectToServer(clientFD, "127.0.0.1", PORT);
+	//struct sockaddr_in serverAddress;
 	char buffer[1024] = { 0 };
-	int stdin_fd = fileno(stdin);
+	int stdinFD = fileno(stdin);
 
-	if ((client_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
-		perror("Socket creation error");
-		exit(EXIT_FAILURE);
-	}
+	//if ((clientFD = socket(AF_INET, SOCK_STREAM, 0)) == -1) {
+	//	perror("Socket creation error");
+	//	exit(EXIT_FAILURE);
+	//}
 
-	serv_addr.sin_family = AF_INET;
-	serv_addr.sin_port = htons(PORT);
+	//serverAddress.sin_family = AF_INET;
+	//serverAddress.sin_port = htons(PORT);
 
-	if (inet_pton(AF_INET, IP, &serv_addr.sin_addr) <= 0) {
-		perror("Invalid address/ Address not supported");
-		exit(EXIT_FAILURE);
-	}
+	//if (inet_pton(AF_INET, IP, &serverAddress.sin_addr) <= 0) {
+	//	perror("Invalid address/ Address not supported");
+	//	exit(EXIT_FAILURE);
+	//}
 
-	if (connect(client_fd, (struct sockaddr*) &serv_addr, sizeof(serv_addr)) < 0) {
-		perror("Connection failed");
-		exit(EXIT_FAILURE);
-	}
+	//if (connect(clientFD, (struct sockaddr*) &serverAddress, sizeof(serverAddress)) < 0) {
+	//	perror("Connection failed");
+	//	exit(EXIT_FAILURE);
+	//}
 
 	/* Read the welcome message */
-	read(client_fd, buffer, sizeof(buffer));
+	read(clientFD, buffer, sizeof(buffer));
 	printf("%s", buffer);
 	memset(buffer, 0, sizeof buffer);
 	
@@ -82,9 +86,9 @@ int main() {
 	 * 2. the input console where the user types the message */
 	struct pollfd fds[2];
 	int nfds = 2;
-	fds[0].fd = client_fd;
+	fds[0].fd = clientFD;
 	fds[0].events = POLLIN;
-	fds[1].fd = stdin_fd;
+	fds[1].fd = stdinFD;
 	fds[1].events = POLLIN;
 
 	/* Text typed by the user */
@@ -97,8 +101,8 @@ int main() {
 	int timeout = 10000;
 	while (1) {
 		/* We wait for events */
-		int num_events = poll(fds, nfds, timeout);
-		if (num_events > 0) {
+		int numEvents = poll(fds, nfds, timeout);
+		if (numEvents > 0) {
 			/* When a user types on console we buffer the entered text.
 			 * If the last typed character is a new line '\n' we send all the
 			 * the buffered data to the server, then we empty the input buffer.
@@ -106,14 +110,14 @@ int main() {
 			 * in the input text. It should be improved. */
 			if (fds[1].revents & POLLIN) {
 				memset(buffer, 0, sizeof buffer);
-				int bytes_read = read(stdin_fd, buffer, sizeof(buffer));
+				int bytesRead = read(stdinFD, buffer, sizeof(buffer));
 				printf("%s", buffer);
     				fflush(stdout);
 				memcpy(input + length, buffer, strlen(buffer));
-				length += bytes_read;
+				length += bytesRead;
 
 				if (input[length - 1] == '\n') {
-					send(client_fd, input, strlen(input), 0);
+					send(clientFD, input, strlen(input), 0);
 					memset(input, 0, sizeof input);
 					length = 0;
 					printf("you> ");
@@ -127,9 +131,9 @@ int main() {
 			 * 3. we re-display the input text on the next line */
 			if (fds[0].revents & POLLIN) {
 				memset(buffer, 0, sizeof buffer);
-				int bytes_read = read(client_fd, buffer, sizeof(buffer));
+				int bytesRead = read(clientFD, buffer, sizeof(buffer));
 
-				if (bytes_read <= 0) {
+				if (bytesRead <= 0) {
 					printf("Server disconnected. Bye bye\n");
 					return 0;
 				}
