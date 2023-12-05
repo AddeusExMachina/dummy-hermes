@@ -52,29 +52,9 @@ int main() {
 	 * 4. connect() to initiate the connection to the server
 	 * ======================================================================================================================== */
 	int clientFD = createClient();
-	//connectToServer(clientFD, IP, PORT);
 	connectToServer(clientFD, "127.0.0.1", PORT);
-	//struct sockaddr_in serverAddress;
 	char buffer[1024] = { 0 };
 	int stdinFD = fileno(stdin);
-
-	//if ((clientFD = socket(AF_INET, SOCK_STREAM, 0)) == -1) {
-	//	perror("Socket creation error");
-	//	exit(EXIT_FAILURE);
-	//}
-
-	//serverAddress.sin_family = AF_INET;
-	//serverAddress.sin_port = htons(PORT);
-
-	//if (inet_pton(AF_INET, IP, &serverAddress.sin_addr) <= 0) {
-	//	perror("Invalid address/ Address not supported");
-	//	exit(EXIT_FAILURE);
-	//}
-
-	//if (connect(clientFD, (struct sockaddr*) &serverAddress, sizeof(serverAddress)) < 0) {
-	//	perror("Connection failed");
-	//	exit(EXIT_FAILURE);
-	//}
 
 	/* Read the welcome message */
 	read(clientFD, buffer, sizeof(buffer));
@@ -128,7 +108,8 @@ int main() {
 			/* If there is a message from the server, in order to display it:
 			 * 1. we hide the text entered in input by the user
 			 * 2. we show the message on the current line
-			 * 3. we re-display the input text on the next line */
+			 * 3. we re-display the input text on the next line
+			 * Note that when the text typed by the user is on multiple lines and it receives a message, only the last line is hidden. */
 			if (fds[0].revents & POLLIN) {
 				memset(buffer, 0, sizeof buffer);
 				int bytesRead = read(clientFD, buffer, sizeof(buffer));
@@ -138,23 +119,14 @@ int main() {
 					return 0;
 				}
 
-                		/* Save the cursor position */
-                		printf("\033[s");
                 		/* Move to the beginning of the line */
                 		printf("\033[0G");
                 		/* Clear the line */
                 		printf("\033[K");
-				/* Print the message */
-				printf("%s\n", buffer);
 
-				/* Reprint the user's input */
+				printf("%s\n", buffer);
 				printf("you> %s", input);
 				fflush(stdout);
-
-                		/* Restore the cursor position */
-                		printf("\033[u");
-				/* Move the cursor down by one line */
-				printf("\033[B");
 			}
 		}
 	}
