@@ -73,6 +73,8 @@ int acceptConnection(int serverFD) {
 	return clientFD;
 }
 
+/* To instantiate the client socket we rely on socket() to create a socket that allows communication
+ * between processes on different hosts connected by IPV4. */
 int createClient() {
 	int clientFD;
 	if ((clientFD = socket(AF_INET, SOCK_STREAM, 0)) == -1) {
@@ -82,6 +84,10 @@ int createClient() {
 	return clientFD;
 }
 
+/* To enable the connection of a client to the server we use:
+ * 1. htons() to convert values between host and network byte order to avoid conflicts about endianess format
+ * 2. inet_pton() to convert IPv4 and IPv6 addresses from text to binary form
+ * 3. connect() to initiate the connection to the server. */
 void connectToServer(int clientFD, char *ip, int port) {
 	struct sockaddr_in serverAddress;
 

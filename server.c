@@ -33,8 +33,39 @@ struct Client {
 	char* username;
 	int fdsIndex;
 };
-
 struct Client *clients[MAX_CLIENTS];
+
+/* The set of file descriptors used to check incoming data: one for the server plus one for each client */
+struct pollfd fds[MAX_CLIENTS + 1];
+
+/* Notes about the number of connected clients:
+ * 1. numClients also represents the index of the last client in clients
+ * 2. numClients+1 represents the index of the last client in fds, keep in mind that the 
+ *    first entry in the set is always occupied by the server. */
+int numClients = 0;
+
+
+/* Discard all info about a client by releasing the related resources and by overriding
+ * the entry of that client in the file descriptor set and in clients with the last entry,
+ * the data in the last entry of both collections is then invalidated. */
+void freeClient(struct Client *client, int i) {
+	int fdsIndex = client->fdsIndex;
+	close(fds[client->fdsIndex].fd);
+	free(client->username);
+
+	fds[client->fdsIndex].fd = fds[numClients].fd;
+	fds[numClients].fd = -1;
+	fds[numClients].events = 0;
+	fds[numClients].revents = 0;
+
+	/* Last client takes the position of current deleting client in file descriptor set */
+	clients[numClients - 1]->fdsIndex = fdsIndex;
+	clients[i] = clients[numClients - 1];
+	clients[numClients - 1] = NULL;
+
+	numClients -= 1;
+}
+
 
 /* In main() first we create the server socket, then
  * we listen for connection requests and for messages from connected clients */
@@ -44,17 +75,10 @@ int main() {
 
 	char buffer[1024] = { 0 };
 
-	/* The set of file descriptors used to check incoming data: one for the server plus one for each client */
-	struct pollfd* fds = malloc(MAX_CLIENTS + 1);
 	/* At the beginning we will look for events on a single file descriptor,
 	 * that is the server looking for new connections. */
 	fds[0].fd = serverFD;
 	fds[0].events = POLLIN;
-	/* Notes about the number of connected clients:
-	 * 1. numClients also represents the index of the last client in clients
-	 * 2. numClients+1 represents the index of the last client in fds, keep in mind that the 
-	 *    first entry in the set is always occupied by the server. */
-	int numClients = 0;
 
 	char* welcome_message =
 		"=============================\n"
@@ -103,37 +127,24 @@ int main() {
 					 * 2. there's a message from the client */
 					int bytes_received = read(fds[fdsIndex].fd, buffer, sizeof(buffer) - 1);
 					if (bytes_received <= 0) {
-						/* If the client disconnected we discard all info about it: we do it by
-						 * releasing the related resources and by overriding the entry of that client
-						 * in the file descriptor set and in clients with the last entry,
-						 * the data in the last entry of both collections is then invalidated. */
-						close(fds[fdsIndex].fd);
-						free(client->username);
-
-						fds[fdsIndex].fd = fds[numClients].fd;
-						fds[numClients].fd = -1;
-						fds[numClients].events = 0;
-						fds[numClients].revents = 0;
-
-						/* Last client takes the position of current deleting client in file descriptor set */
-						clients[numClients - 1]->fdsIndex = fdsIndex;
-						clients[i] = clients[numClients - 1];
-						clients[numClients - 1] = NULL;
-
-						numClients -= 1;
+						/* The client disconnected. */
+						freeClient(client, i);
 					} else {
 						/* The message may be a command or a text message for the other clients */
 						if (buffer[0] == '\\') {
-						/* Assume for now that when the first character in a message is a backslash
-						 * the client entered the command for changing its username */
-							/* the new username is the string right after "\setusername ",
-							 * whose length is 13 (including the space) */
-							int new_username_length = bytes_received - 13;
-							char* new_username = malloc(new_username_length);
-							memcpy(new_username, buffer + 13, new_username_length);
-							new_username[new_username_length - 1] = '\0';
-							free(client->username);
-							client->username = new_username;
+							if (strncmp(buffer+1, "setusername", 11) == 0) {
+								/* The new username is the string after '\setusername ',
+								 * whose length is 13. */
+								int new_username_length = bytes_received - 13;
+								char* new_username = malloc(new_username_length);
+								memcpy(new_username, buffer + 13, new_username_length);
+								new_username[new_username_length - 1] = '\0';
+								free(client->username);
+								client->username = new_username;
+							} else if (strncmp(buffer+1, "exit", 4) == 0) {
+								/* The user closed the connection */
+								freeClient(client, i);
+							}
 						} else {
 							/* If the client sent a message, broadcast the message */
 							int message_length = strlen(client->username) + bytes_received + 2;

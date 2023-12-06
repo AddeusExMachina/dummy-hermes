@@ -44,13 +44,6 @@ void setRawMode() {
 int main() {
 	setRawMode();
 
-	/* ================================================= Client socket creation ================================================= *
-	 * To instantiate the client socket we rely on:
-	 * 1. socket() to create a socket that allows communication between processes on different hosts connected by IPV4
-	 * 2. htons() to convert values between host and network byte order to avoid conflicts about endianess format
-	 * 3. inet_pton() to convert IPv4 and IPv6 addresses from text to binary form
-	 * 4. connect() to initiate the connection to the server
-	 * ======================================================================================================================== */
 	int clientFD = createClient();
 	connectToServer(clientFD, "127.0.0.1", PORT);
 	char buffer[1024] = { 0 };
@@ -98,6 +91,10 @@ int main() {
 
 				if (input[length - 1] == '\n') {
 					send(clientFD, input, strlen(input), 0);
+					if (strcmp(input, "\\exit\n") == 0) {
+						printf("Bye bye\n");
+						return 0;
+					}
 					memset(input, 0, sizeof input);
 					length = 0;
 					printf("you> ");
