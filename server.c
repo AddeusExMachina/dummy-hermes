@@ -44,7 +44,6 @@ struct pollfd fds[MAX_CLIENTS + 1];
  *    first entry in the set is always occupied by the server. */
 int numClients = 0;
 
-
 /* Discard all info about a client by releasing the related resources and by overriding
  * the entry of that client in the file descriptor set and in clients with the last entry,
  * the data in the last entry of both collections is then invalidated. */
@@ -63,9 +62,8 @@ void freeClient(struct Client *client, int i) {
 	clients[i] = clients[numClients - 1];
 	clients[numClients - 1] = NULL;
 
-	numClients -= 1;
+	numClients--;
 }
-
 
 /* In main() first we create the server socket, then
  * we listen for connection requests and for messages from connected clients */
@@ -80,7 +78,7 @@ int main() {
 	fds[0].fd = serverFD;
 	fds[0].events = POLLIN;
 
-	char* welcome_message =
+	char* welcomeMessage =
 		"=============================\n"
 		" Hello, Welcome in this chat \n"
 		"=============================\n";
@@ -100,9 +98,9 @@ int main() {
 				int clientFD = acceptConnection(serverFD);
 
  				/* The default value of username is set to the string "user<FD>" where <FD> is the file descriptor of that client. */
-				int username_length = snprintf(NULL, 0, "user%d", clientFD) + 1;
-				char *username = (char *) malloc(username_length);
-				snprintf(username, username_length, "user%d", clientFD);
+				int usernameLength = snprintf(NULL, 0, "user%d", clientFD) + 1;
+				char *username = (char *) malloc(usernameLength);
+				snprintf(username, usernameLength, "user%d", clientFD);
 				struct Client *client = malloc(sizeof(*client));
 				client->username = username;
 				client->fdsIndex = numClients + 1;
@@ -112,9 +110,9 @@ int main() {
 				fds[client->fdsIndex].fd = clientFD;
 				fds[client->fdsIndex].events = POLLIN;
 
-				numClients += 1;
+				numClients++;
 
-				send(clientFD, welcome_message, strlen(welcome_message), 0);
+				send(clientFD, welcomeMessage, strlen(welcomeMessage), 0);
 			}
 
 			for (int i = 0; i < numClients; i++) {
@@ -125,8 +123,8 @@ int main() {
 					/* If there is activity on a client it means:
 					 * 1. the client disconnected, or
 					 * 2. there's a message from the client */
-					int bytes_received = read(fds[fdsIndex].fd, buffer, sizeof(buffer) - 1);
-					if (bytes_received <= 0) {
+					int bytesRead = read(fds[fdsIndex].fd, buffer, sizeof(buffer) - 1);
+					if (bytesRead <= 0) {
 						/* The client disconnected. */
 						freeClient(client, i);
 					} else {
@@ -135,25 +133,24 @@ int main() {
 							if (strncmp(buffer+1, "setusername", 11) == 0) {
 								/* The new username is the string after '\setusername ',
 								 * whose length is 13. */
-								int new_username_length = bytes_received - 13;
-								char* new_username = malloc(new_username_length);
-								memcpy(new_username, buffer + 13, new_username_length);
-								new_username[new_username_length - 1] = '\0';
+								int newUsernameLength = bytesRead - 13;
+								char* newUsername = malloc(newUsernameLength);
+								memcpy(newUsername, buffer + 13, newUsernameLength);
+								newUsername[newUsernameLength - 1] = '\0';
 								free(client->username);
-								client->username = new_username;
+								client->username = newUsername;
 							} else if (strncmp(buffer+1, "exit", 4) == 0) {
 								/* The user closed the connection */
 								freeClient(client, i);
 							}
 						} else {
 							/* If the client sent a message, broadcast the message */
-							int message_length = strlen(client->username) + bytes_received + 2;
-							char message[message_length];
-							snprintf(message, message_length, "%s> %s", client->username, buffer);
+							char message[1024];
+							int messageLength = snprintf(message, sizeof(message), "%s> %s", client->username, buffer);
 
 							for (int j = 0; j < numClients; j++) {
 								if (i != j) {
-									send(fds[clients[j]->fdsIndex].fd, message, message_length, 0);
+									send(fds[clients[j]->fdsIndex].fd, message, messageLength, 0);
 								}
 							}
 						}

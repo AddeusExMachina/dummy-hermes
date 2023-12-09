@@ -49,11 +49,6 @@ int main() {
 	char buffer[1024] = { 0 };
 	int stdinFD = fileno(stdin);
 
-	/* Read the welcome message */
-	read(clientFD, buffer, sizeof(buffer));
-	printf("%s", buffer);
-	memset(buffer, 0, sizeof buffer);
-	
 	/* The set of file descriptors used to check incoming data is made up of:
 	 * 1. the client file descriptor for data from the server, that is messages from other clients
 	 * 2. the input console where the user types the message */
@@ -77,29 +72,30 @@ int main() {
 		int numEvents = poll(fds, nfds, timeout);
 		if (numEvents > 0) {
 			/* When a user types on console we buffer the entered text.
-			 * If the last typed character is a new line '\n' we send all the
-			 * the buffered data to the server, then we empty the input buffer.
-			 * TODO: This is not so nice, a new line character may appear in any position
-			 * in the input text. It should be improved. */
+			 * If a character is the new line '\n' we send all the
+			 * the buffered data to the server, then we empty the input buffer. */
 			if (fds[1].revents & POLLIN) {
 				memset(buffer, 0, sizeof buffer);
 				int bytesRead = read(stdinFD, buffer, sizeof(buffer));
-				printf("%s", buffer);
-    				fflush(stdout);
-				memcpy(input + length, buffer, strlen(buffer));
-				length += bytesRead;
 
-				if (input[length - 1] == '\n') {
-					send(clientFD, input, strlen(input), 0);
-					if (strcmp(input, "\\exit\n") == 0) {
-						printf("Bye bye\n");
-						return 0;
-					}
-					memset(input, 0, sizeof input);
-					length = 0;
-					printf("you> ");
+				for (int i = 0; i < bytesRead; i++) {
+					printf("%c", buffer[i]);
 					fflush(stdout);
+					input[length++] = buffer[i];
+
+					if (buffer[i] == '\n') {
+						send(clientFD, input, strlen(input), 0);
+						if (strcmp(input, "\\exit\n") == 0) {
+							printf("Bye bye\n");
+							return 0;
+						}
+						memset(input, 0, sizeof input);
+						length = 0;
+						printf("you> ");
+						fflush(stdout);
+					}
 				}
+
 			}
 
 			/* If there is a message from the server, in order to display it:
@@ -121,7 +117,7 @@ int main() {
                 		/* Clear the line */
                 		printf("\033[K");
 
-				printf("%s\n", buffer);
+				printf("%s", buffer);
 				printf("you> %s", input);
 				fflush(stdout);
 			}
