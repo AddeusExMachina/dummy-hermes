@@ -23,8 +23,10 @@
 
 /* To create the server we instantiate a socket relying on:
  * 1. socket() to create a socket that allows communication between processes on different hosts connected by IPV4
- * 2. setsockopt() to enable the reuse of address and port */
-int createServer() {
+ * 2. setsockopt() to enable the reuse of address and port
+ * 3. bind() to bind the socket to (local) address and port
+ * 4. listen() to actually make the socket capable of listening for connections */
+int createServer(int port) {
 	int serverFD;
 	int opt = 1;
 
@@ -38,13 +40,6 @@ int createServer() {
 		exit(EXIT_FAILURE);
 	}
 
-	return serverFD;
-}
-
-/* We put the server listening on a given port using:
- * 1. bind() to bind the socket to (local) address and port
- * 2. listen() to actually make the socket capable of listening for connections */
-void setListenMode(int serverFD, int port) {
 	struct sockaddr_in address;
 	socklen_t addrlen = sizeof(address);
 
@@ -61,6 +56,8 @@ void setListenMode(int serverFD, int port) {
 		perror("listen error");
 		exit(EXIT_FAILURE);
 	}
+
+	return serverFD;
 }
 
 /* Create a socket from a client connection request and return the relative file descriptor. 

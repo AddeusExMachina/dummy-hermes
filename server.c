@@ -68,10 +68,9 @@ void freeClient(struct Client *client, int i) {
 /* In main() first we create the server socket, then
  * we listen for connection requests and for messages from connected clients */
 int main() {
-	int serverFD = createServer();
-	setListenMode(serverFD, PORT);
+	int serverFD = createServer(PORT);
 
-	char buffer[1024] = { 0 };
+	char buffer[1024];
 
 	/* At the beginning we will look for events on a single file descriptor,
 	 * that is the server looking for new connections. */
