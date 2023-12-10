@@ -27,9 +27,6 @@
 
 #include "socketlib.h"
 
-#define PORT 50001
-#define IP "127.0.0.1"
-
 /* Set the terminal to raw mode.
  * Using raw mode we can avoid that text entered by user and text from incoming messages collide. */
 void setRawMode() {
@@ -41,12 +38,20 @@ void setRawMode() {
 
 /* In main() first we create a client socket to connect to the server, then
  * we continously listen for messages from other clients and for console input */
-int main() {
+int main(int argc, char **argv) {
+	if (argc < 3) {
+		printf("Please specify server ip and port\n");
+		exit(EXIT_FAILURE);
+	}
+
 	setRawMode();
 
 	int clientFD = createClient();
-	connectToServer(clientFD, "127.0.0.1", PORT);
-	char buffer[1024] = { 0 };
+	char *ip = argv[1];
+	int port = atoi(argv[2]);
+	connectToServer(clientFD, ip, port);
+
+	char buffer[1024];
 	int stdinFD = fileno(stdin);
 
 	/* The set of file descriptors used to check incoming data is made up of:
