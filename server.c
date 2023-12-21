@@ -28,41 +28,133 @@
 #define MAX_CLIENTS 1000
 #define PORT 50001
 
-/* For each client we keep information about its username and the relative position in the file descriptor set. */
+/* For each client we keep information about the username, the position in the file descriptor set
+ * and pointers to next and previous clients. Clients are managed in a double linked list fashion
+ * to easily iterate among them. */
 struct Client {
 	char* username;
 	int fdsIndex;
+	struct Client* next;
+	struct Client* prev;
 };
-struct Client *clients[MAX_CLIENTS];
+struct Client* head;
+struct Client* tail;
+
+/* A container from which a given client can be found: the key is actually the
+ * client's username. */
+struct bucket {
+	char* key;
+	struct Client* value;
+	struct bucket* next;
+};
+struct bucket *hashtable[MAX_CLIENTS];
+
+/* Simple hash evaluation for a string as in section 6.6 of 'The C Programming Language' */
+int hash(char* s) {
+	int hashValue;
+	for (hashValue = 0; *s != '\0'; s++) {
+		hashValue = *s + 31 * hashValue;
+	}
+	return hashValue % MAX_CLIENTS;
+}
+
+/* Remove a client's bucket from the hashtable collection by the key (client's username).
+ * The removal is inspired by Linus Torvalds linked list argument where we take
+ * advantage of using the undirect pointer b to avoid handling the special case
+ * for removing the head. */
+void deleteClientByUsername(char* username) {
+	struct bucket **b = &hashtable[hash(username)];
+	while (*b != NULL && strcmp((*b)->key, username) != 0) {
+		b = &(*b)->next;
+	}
+	if (*b != NULL) {
+		*b = (*b)->next;
+	}
+}
+
+/* Insert a pair username-client in hashtable.
+ * There is the same reasoning for the undirect pointer b as in deleteClientByUsername. */
+void insertClient(char* username, struct Client* c) {
+	struct bucket **b = &hashtable[hash(username)];
+	while (*b != NULL) {
+		b = &(*b)->next;
+	}
+
+	struct bucket* newBucket;
+	newBucket = malloc(sizeof(newBucket));
+	newBucket->key = strdup(username);
+	newBucket->value = c;
+	*b = newBucket;
+}
+
+/* Find the client, if present, contained in the bucket whose key is username. */
+struct Client* getClientByUsername(char* username) {
+	int hashValue = hash(username);
+	struct bucket* curr = hashtable[hashValue];
+	while (curr != NULL) {
+		if (strcmp(curr->key, username) == 0) {
+			/* Client found */
+			return curr->value;
+		} else {
+			curr = curr->next;
+		}
+	}
+	/* No client with that username has been found. */
+	return NULL;
+}
 
 /* The set of file descriptors used to check incoming data: one for the server plus one for each client */
 struct pollfd fds[MAX_CLIENTS + 1];
 
-/* Notes about the number of connected clients:
- * 1. numClients also represents the index of the last client in clients
- * 2. numClients+1 represents the index of the last client in fds, keep in mind that the 
- *    first entry in the set is always occupied by the server. */
+/* The number of connected clients: it's useful to specify how many items are in the fds array in poll(). */
 int numClients = 0;
 
-/* Discard all info about a client by releasing the related resources and by overriding
- * the entry of that client in the file descriptor set and in clients with the last entry,
- * the data in the last entry of both collections is then invalidated. */
-void freeClient(struct Client *client, int i) {
-	int fdsIndex = client->fdsIndex;
+/* Discard all info about a client by releasing and overwriting the related resources.
+ * As side effect we update the fds entries and if necessary also head and tail. */
+void freeClient(struct Client *client) {
+	/* Close that client's file descriptor. */
 	close(fds[client->fdsIndex].fd);
+	/* Deallocate the space for username string. */
 	free(client->username);
 
-	fds[client->fdsIndex].fd = fds[numClients].fd;
-	fds[numClients].fd = -1;
-	fds[numClients].events = 0;
-	fds[numClients].revents = 0;
+	/* Tail client will occupy the entry in fds where the currently deleting client was at. 
+	 * To do it we overwrite the client data in its fds entry with the tail data and invalidate the
+	 * data present at tail index. */
+	fds[client->fdsIndex].fd = fds[tail->fdsIndex].fd;
+	fds[tail->fdsIndex].fd = -1;
+	fds[tail->fdsIndex].events = 0;
+	int revents = fds[tail->fdsIndex].revents;
+	fds[tail->fdsIndex].revents = 0;
+	tail->fdsIndex = client->fdsIndex;
+	/* Ignore the returned events of tail only if it is the client removed, 
+	 * otherwise restore that info for tail. */
+	fds[tail->fdsIndex].revents = tail == client ? 0 : revents;
 
-	/* Last client takes the position of current deleting client in file descriptor set */
-	clients[numClients - 1]->fdsIndex = fdsIndex;
-	clients[i] = clients[numClients - 1];
-	clients[numClients - 1] = NULL;
+	/* The client that might be the new tail. */
+	struct Client *prevTail = tail->prev;
 
-	numClients--;
+	/* Update tail next pointer and client next prev paying attention if: 
+	 * 1. we remove the tail (NULL reference)
+	 * 2. we remove the client before tail (we may create a loop) */
+	if (client != tail && client != prevTail) {
+		tail->next = client->next;
+		client->next->prev = tail;
+	}
+	tail->prev = client->prev;
+	if (client == head) {
+		/* If head is being removed update head with tail only if there is at least another client. */
+		head = head == tail ? NULL : tail;
+	} else {
+		/* For any other client just update the next pointer of its previous. */
+		client->prev->next = tail;
+	}
+	/* We update tail to prevTail only if we're not deleting prevTail, otherwise tail is unchanged. */
+	if (prevTail != client) {
+		tail = prevTail;
+		if (tail != NULL) {
+			tail->next = NULL;
+		}
+	}
 }
 
 /* In main() first we create the server socket, then
@@ -103,8 +195,19 @@ int main() {
 				struct Client *client = malloc(sizeof(*client));
 				client->username = username;
 				client->fdsIndex = numClients + 1;
+				fds[0].events = POLLIN;
 
-				clients[numClients] = client;
+				if (head == NULL) {
+					/* First client inserted. */
+					head = client;
+				} else {
+					/* Append the client to tail. */
+					tail->next = client;
+					client->prev = tail;
+				}
+				tail = client;
+
+				insertClient(username, client);
 
 				fds[client->fdsIndex].fd = clientFD;
 				fds[client->fdsIndex].events = POLLIN;
@@ -114,8 +217,7 @@ int main() {
 				send(clientFD, welcomeMessage, strlen(welcomeMessage), 0);
 			}
 
-			for (int i = 0; i < numClients; i++) {
-				struct Client* client = clients[i];
+			for (struct Client *client = head; client != NULL; client = client->next) {
 				int fdsIndex = client->fdsIndex;
 
 				if (fds[fdsIndex].revents & POLLIN) {
@@ -125,10 +227,13 @@ int main() {
 					int bytesRead = read(fds[fdsIndex].fd, buffer, sizeof(buffer) - 1);
 					if (bytesRead <= 0) {
 						/* The client disconnected. */
-						freeClient(client, i);
+						deleteClientByUsername(client->username);
+						freeClient(client);
+						numClients--;
 					} else {
 						/* The message may be a command or a text message for the other clients */
 						if (buffer[0] == '\\') {
+							/* Commands start with '\'. */
 							if (strncmp(buffer+1, "setusername", 11) == 0) {
 								/* The new username is the string after '\setusername ',
 								 * whose length is 13. */
@@ -136,20 +241,29 @@ int main() {
 								char* newUsername = malloc(newUsernameLength);
 								memcpy(newUsername, buffer + 13, newUsernameLength);
 								newUsername[newUsernameLength - 1] = '\0';
+
+								if (getClientByUsername(newUsername) != NULL) {
+									send(fds[fdsIndex].fd, "Username already exists\n", 24, 0);
+									memset(buffer, 0, sizeof buffer);
+									continue;
+								}
+								deleteClientByUsername(client->username);
+								insertClient(newUsername, client);
 								free(client->username);
 								client->username = newUsername;
 							} else if (strncmp(buffer+1, "exit", 4) == 0) {
 								/* The user closed the connection */
-								freeClient(client, i);
+								deleteClientByUsername(client->username);
+								freeClient(client);
 							}
 						} else {
 							/* If the client sent a message, broadcast the message */
 							char message[1024];
 							int messageLength = snprintf(message, sizeof(message), "%s> %s", client->username, buffer);
 
-							for (int j = 0; j < numClients; j++) {
-								if (i != j) {
-									send(fds[clients[j]->fdsIndex].fd, message, messageLength, 0);
+							for (struct Client *c = head; c != NULL; c = c->next) {
+								if (c != client) {
+									send(fds[c->fdsIndex].fd, message, messageLength, 0);
 								}
 							}
 						}
